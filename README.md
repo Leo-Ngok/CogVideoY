@@ -7,7 +7,28 @@ Here is the documentation and presentations: [Overleaf-project-here](https://www
 
 This project is done (currently) by Cheong Kio Ngok, Yiyang Du and Mingyu Su, and is supervised by Runxin Zhong.
 
+These are (some) optimizations that we desire to implement.
+
+[DeepCache](https://arxiv.org/pdf/2312.00858)
+
+[ParaTAA](https://arxiv.org/pdf/2402.09970)
+
+[PipeFusion](https://arxiv.org/pdf/2405.14430)
+
+[X-DiT](https://github.com/xdit-project/xDiT)
+
+
+* A (possibly) HKUST postdoc is also working on it. Let's chat with him for more details. *
+[Xibo-Sun](https://github.com/xibosun)
+
+
+[PAB](https://arxiv.org/pdf/2408.12588)
+
+[Delta-DiT](https://arxiv.org/pdf/2406.01125)
+
 Below is the README of CogVideoY.
+
+
 
 # CogVideo & CogVideoX
 
