@@ -1,3 +1,14 @@
+# CogVideoY
+!!!! READ THIS FIRST !!!
+
+This project aims to speed up the inference process of CogVideo by incorporating techniques such as DeepCache, Triangular Anderson Acceleration and PipeFusion.
+
+Here is the documentation and presentations: [Overleaf-project-here](https://www.overleaf.com/5354248132zvrhfgqxnwsz#9d4c92)
+
+This project is done (currently) by Cheong Kio Ngok, Yiyang Du and Mingyu Su, and is supervised by Runxin Zhong.
+
+Below is the README of CogVideoY.
+
 # CogVideo & CogVideoX
 
 [中文阅读](./README_zh.md)
