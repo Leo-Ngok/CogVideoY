@@ -1,4 +1,5 @@
 from functools import partial
+from typing import Optional
 from einops import rearrange, repeat
 import numpy as np
 
@@ -589,18 +590,18 @@ class DiffusionTransformer(BaseModel):
     def __init__(
         self,
         transformer_args,
-        num_frames,
-        time_compressed_rate,
-        latent_width,
-        latent_height,
-        patch_size,
-        in_channels,
-        out_channels,
-        hidden_size,
-        num_layers,
-        num_attention_heads,
-        elementwise_affine,
-        time_embed_dim=None,
+        num_frames:int, # 49
+        time_compressed_rate:int, # 4
+        latent_width:int , # 90
+        latent_height:int, # 60
+        patch_size:int, # 2
+        in_channels: int, # 16
+        out_channels:int, # 16
+        hidden_size:int, # 1920
+        num_layers:int, # 30
+        num_attention_heads:int, # 30
+        elementwise_affine:bool, # True
+        time_embed_dim:Optional[int]=None, # int
         num_classes=None,
         modules={},
         input_time="adaln",
@@ -630,7 +631,7 @@ class DiffusionTransformer(BaseModel):
         self.input_time = input_time
         self.num_layers = num_layers
         self.num_attention_heads = num_attention_heads
-        self.is_decoder = transformer_args.is_decoder
+        self.is_decoder:bool = transformer_args.is_decoder
         self.elementwise_affine = elementwise_affine
         self.height_interpolation = height_interpolation
         self.width_interpolation = width_interpolation
@@ -738,7 +739,7 @@ class DiffusionTransformer(BaseModel):
                 instantiate_from_config(
                     adaln_layer_config,
                     height=self.latent_height // self.patch_size,
-                    width=self.latent_width // self.patch_size,
+                    width =self.latent_width // self.patch_size,
                     hidden_size=self.hidden_size,
                     num_layers=self.num_layers,
                     compressed_num_frames=(self.num_frames - 1) // self.time_compressed_rate + 1,
@@ -772,12 +773,12 @@ class DiffusionTransformer(BaseModel):
 
         return
 
-    def forward(self, x, timesteps=None, context=None, y=None, **kwargs):
+    def forward(self, x:torch.Tensor, timesteps:Optional[torch.Tensor]=None, context:Optional[torch.Tensor]=None, y=None, **kwargs):
         b, t, d, h, w = x.shape
         if x.dtype != self.dtype:
             x = x.to(self.dtype)
 
-        # This is not use in inference
+        # This is not used in inference
         if "concat_images" in kwargs and kwargs["concat_images"] is not None:
             if kwargs["concat_images"].shape[0] != x.shape[0]:
                 concat_images = kwargs["concat_images"].repeat(2, 1, 1, 1, 1)
@@ -788,10 +789,11 @@ class DiffusionTransformer(BaseModel):
         assert (y is not None) == (
             self.num_classes is not None
         ), "must specify y if and only if the model is class-conditional"
-        t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False, dtype=self.dtype)
-        emb = self.time_embed(t_emb)
 
-        if self.num_classes is not None:
+        t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False, dtype=self.dtype)
+        emb:torch.Tensor = self.time_embed(t_emb)
+
+        if self.num_classes is not None: # I guess it is None, so skip it.
             # assert y.shape[0] == x.shape[0]
             assert x.shape[0] % y.shape[0] == 0
             y = y.repeat_interleave(x.shape[0] // y.shape[0], dim=0)
@@ -804,5 +806,8 @@ class DiffusionTransformer(BaseModel):
         kwargs["text_length"] = context.shape[1]
 
         kwargs["input_ids"] = kwargs["position_ids"] = kwargs["attention_mask"] = torch.ones((1, 1)).to(x.dtype)
+        # It is just BaseTransformer.forward.
+        #input_ids, position_ids, attn_mask, output_hidden_states=False, kwargs.
+        
         output = super().forward(**kwargs)[0]
         return output

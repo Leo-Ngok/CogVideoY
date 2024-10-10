@@ -177,7 +177,7 @@ class CheckpointFunction(torch.autograd.Function):
         return (None, None) + input_grads
 
 
-def timestep_embedding(timesteps, dim, max_period=10000, repeat_only=False, dtype=torch.float32):
+def timestep_embedding(timesteps:torch.Tensor, dim:int, max_period=10000, repeat_only=False, dtype=torch.float32):
     """
     Create sinusoidal timestep embeddings.
     :param timesteps: a 1-D Tensor of N indices, one per batch element.

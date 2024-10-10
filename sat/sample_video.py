@@ -1,7 +1,7 @@
 import os
 import math
 import argparse
-from typing import List, Union
+from typing import Any, List, Union
 from tqdm import tqdm
 from omegaconf import ListConfig
 import imageio
@@ -21,6 +21,9 @@ from arguments import get_args
 from torchvision.transforms.functional import center_crop, resize
 from torchvision.transforms import InterpolationMode
 from PIL import Image
+
+from vae_modules.autoencoder import AbstractAutoencoder
+from sgm.modules.encoders.modules import GeneralConditioner
 
 
 def read_from_cli():
@@ -44,16 +47,20 @@ def read_from_file(p, rank=0, world_size=1):
             yield l.strip(), cnt
 
 
-def get_unique_embedder_keys_from_conditioner(conditioner):
+def get_unique_embedder_keys_from_conditioner(conditioner: GeneralConditioner) -> list[str]:
+    '''
+    Depends on embedders, could be a subset of {jpg, txt}
+    '''
     return list(set([x.input_key for x in conditioner.embedders]))
 
 
-def get_batch(keys, value_dict, N: Union[List, ListConfig], T=None, device="cuda"):
+def get_batch(keys:list[str], value_dict:dict[str, Any], N: Union[List, ListConfig], T=None, device="cuda"):
     batch = {}
     batch_uc = {}
 
-    for key in keys:
+    for key in keys: # a subset of {txt, jpg}
         if key == "txt":
+            # build a tensor of dimension N, filled with (negative) prompt text for each element
             batch["txt"] = np.repeat([value_dict["prompt"]], repeats=math.prod(N)).reshape(N).tolist()
             batch_uc["txt"] = np.repeat([value_dict["negative_prompt"]], repeats=math.prod(N)).reshape(N).tolist()
         else:
@@ -65,6 +72,9 @@ def get_batch(keys, value_dict, N: Union[List, ListConfig], T=None, device="cuda
     for key in batch.keys():
         if key not in batch_uc and isinstance(batch[key], torch.Tensor):
             batch_uc[key] = torch.clone(batch[key])
+    
+    # in this implementation, batch == {"txt": ["<prompt here>"]}, batch_uc == {"txt": [""]}
+
     return batch, batch_uc
 
 
@@ -119,7 +129,9 @@ def sampling_main(args, model_cls):
         model = get_model(args, model_cls)
     else:
         model = model_cls
-
+    
+    # TODO: Remove type hint ?
+    model:SATVideoDiffusionEngine = model
     load_checkpoint(model, args)
     model.eval()
 
@@ -146,6 +158,9 @@ def sampling_main(args, model_cls):
     device = model.device
     with torch.no_grad():
         for text, cnt in tqdm(data_iter):
+
+            # Pass the image to ContextParallelEncoder.
+            # It is 
             if args.image2video:
                 text, image_path = text.split("@@")
                 assert os.path.exists(image_path), image_path
@@ -170,6 +185,7 @@ def sampling_main(args, model_cls):
             batch, batch_uc = get_batch(
                 get_unique_embedder_keys_from_conditioner(model.conditioner), value_dict, num_samples
             )
+            # batch == {"txt": ["your prompt here"]}
             for key in batch:
                 if isinstance(batch[key], torch.Tensor):
                     print(key, batch[key].shape)
@@ -177,6 +193,8 @@ def sampling_main(args, model_cls):
                     print(key, [len(l) for l in batch[key]])
                 else:
                     print(key, batch[key])
+            # embedded vectors from T5. Profile for more details.
+            # c (or uc) is possibly {"vector, crossattn, concat": output from T5}
             c, uc = model.conditioner.get_unconditional_conditioning(
                 batch,
                 batch_uc=batch_uc,
@@ -191,6 +209,8 @@ def sampling_main(args, model_cls):
                 c["concat"] = image
                 uc["concat"] = image
 
+            # Till here, c contains latents of input text and images.
+            
             for index in range(args.batch_size):
                 # reload model on GPU
                 model.to(device)
@@ -206,7 +226,7 @@ def sampling_main(args, model_cls):
                 model.to("cpu")
                 torch.cuda.empty_cache()
                 first_stage_model = model.first_stage_model
-                first_stage_model = first_stage_model.to(device)
+                first_stage_model:AbstractAutoencoder = first_stage_model.to(device)
 
                 latent = 1.0 / model.scale_factor * samples_z
 

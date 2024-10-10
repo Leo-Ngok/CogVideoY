@@ -14,6 +14,7 @@ import torch.nn as nn
 from einops import rearrange
 from packaging import version
 
+from vae_modules.regularizers import AbstractRegularizer
 from vae_modules.ema import LitEma
 from sgm.util import (
     instantiate_from_config,
@@ -24,7 +25,7 @@ from sgm.util import (
     get_context_parallel_group,
     get_context_parallel_group_rank,
 )
-from vae_modules.cp_enc_dec import _conv_split, _conv_gather
+from vae_modules.cp_enc_dec import ContextParallelDecoder3D, ContextParallelEncoder3D, _conv_split, _conv_gather
 
 logpy = logging.getLogger(__name__)
 
@@ -155,10 +156,11 @@ class AutoencodingEngine(AbstractAutoencoder):
         super().__init__(*args, **kwargs)
         self.automatic_optimization = False  # pytorch lightning
 
-        self.encoder = instantiate_from_config(encoder_config)
-        self.decoder = instantiate_from_config(decoder_config)
+        self.encoder:ContextParallelEncoder3D = instantiate_from_config(encoder_config)
+        self.decoder:ContextParallelDecoder3D = instantiate_from_config(decoder_config)
         self.loss = instantiate_from_config(loss_config)
-        self.regularization = instantiate_from_config(regularizer_config)
+        # actually DiagonalGaussianRegularizer
+        self.regularization:AbstractRegularizer = instantiate_from_config(regularizer_config)
         self.optimizer_config = default(optimizer_config, {"target": "torch.optim.Adam"})
         self.diff_boost_factor = diff_boost_factor
         self.disc_start_iter = disc_start_iter
@@ -221,10 +223,10 @@ class AutoencodingEngine(AbstractAutoencoder):
         return_reg_log: bool = False,
         unregularized: bool = False,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, dict]]:
-        z = self.encoder(x)
+        z = self.encoder.forward(x)
         if unregularized:
             return z, dict()
-        z, reg_log = self.regularization(z)
+        z, reg_log = self.regularization.forward(z)
         if return_reg_log:
             return z, reg_log
         return z

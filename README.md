@@ -18,7 +18,7 @@ These are (some) optimizations that we desire to implement.
 [X-DiT](https://github.com/xdit-project/xDiT)
 
 
-* A (possibly) HKUST postdoc is also working on it. Let's chat with him for more details. *
+* A (possibly) HKUST postdoc is also working on it. Let's chat with him for more details.
 [Xibo-Sun](https://github.com/xibosun)
 
 
@@ -26,9 +26,12 @@ These are (some) optimizations that we desire to implement.
 
 [Delta-DiT](https://arxiv.org/pdf/2406.01125)
 
+Let's refer to [Stable-Video-Diffusion](https://static1.squarespace.com/static/6213c340453c3f502425776e/t/655ce779b9d47d342a93c890/1700587395994/stable_video_diffusion.pdf) for more implementation details.
 Below is the README of CogVideoY.
 
+How to use T5 encoder only: [T5 encoder stackoverflow](https://stackoverflow.com/questions/71788825/using-the-encoder-part-only-from-t5-model)
 
+A brief introduction to diffusion transformers. [DiT](https://arxiv.org/pdf/2212.09748)
 
 # CogVideo & CogVideoX
 

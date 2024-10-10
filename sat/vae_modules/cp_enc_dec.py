@@ -381,7 +381,7 @@ class ContextParallelCausalConv3d(nn.Module):
         self.conv = Conv3d(chan_in, chan_out, kernel_size, stride=stride, dilation=dilation, **kwargs)
         self.cache_padding = None
 
-    def forward(self, input_, clear_cache=True):
+    def forward(self, input_:torch.Tensor, clear_cache=True) -> torch.Tensor:
         # if input_.shape[2] == 1: # handle image
         #     # first frame padding
         #     input_parallel = torch.cat([input_] * self.time_kernel_size, dim=2)
@@ -807,7 +807,7 @@ class ContextParallelEncoder3D(nn.Module):
             kernel_size=3,
         )
 
-    def forward(self, x, **kwargs):
+    def forward(self, x:torch.Tensor, **kwargs):
         # timestep embedding
         temb = None
 
@@ -831,7 +831,7 @@ class ContextParallelEncoder3D(nn.Module):
         # h = conv_scatter_to_context_parallel_region(h, dim=2, kernel_size=1)
 
         h = nonlinearity(h)
-        h = self.conv_out(h)
+        h = self.conv_out.forward(h)
 
         return h
 

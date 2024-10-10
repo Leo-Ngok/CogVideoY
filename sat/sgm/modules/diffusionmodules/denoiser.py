@@ -3,6 +3,10 @@ from typing import Dict, Union
 import torch
 import torch.nn as nn
 
+from sgm.modules.diffusionmodules.discretizer import Discretization
+from sgm.modules.diffusionmodules.denoiser_scaling import VideoScaling
+from sgm.modules.diffusionmodules.denoiser_weighting import EpsWeighting
+
 from ...util import append_dims, instantiate_from_config
 
 
@@ -10,13 +14,13 @@ class Denoiser(nn.Module):
     def __init__(self, weighting_config, scaling_config):
         super().__init__()
 
-        self.weighting = instantiate_from_config(weighting_config)
-        self.scaling = instantiate_from_config(scaling_config)
+        self.weighting:EpsWeighting = instantiate_from_config(weighting_config)
+        self.scaling:VideoScaling = instantiate_from_config(scaling_config)
 
-    def possibly_quantize_sigma(self, sigma):
+    def possibly_quantize_sigma(self, sigma:torch.Tensor):
         return sigma
 
-    def possibly_quantize_c_noise(self, c_noise):
+    def possibly_quantize_c_noise(self, c_noise:torch.Tensor):
         return c_noise
 
     def w(self, sigma):
@@ -35,6 +39,9 @@ class Denoiser(nn.Module):
         sigma = append_dims(sigma, input.ndim)
         c_skip, c_out, c_in, c_noise = self.scaling(sigma, **additional_model_inputs)
         c_noise = self.possibly_quantize_c_noise(c_noise.reshape(sigma_shape))
+        # x = input * c_in
+        # timesteps = c_noise
+        # context = cond
         return network(input * c_in, c_noise, cond, **additional_model_inputs) * c_out + input * c_skip
 
 
@@ -43,26 +50,27 @@ class DiscreteDenoiser(Denoiser):
         self,
         weighting_config,
         scaling_config,
-        num_idx,
+        num_idx:int,
         discretization_config,
         do_append_zero=False,
-        quantize_c_noise=True,
+        quantize_c_noise=True, #initialized as false.
         flip=True,
     ):
         super().__init__(weighting_config, scaling_config)
-        sigmas = instantiate_from_config(discretization_config)(num_idx, do_append_zero=do_append_zero, flip=flip)
+        disc:Discretization = instantiate_from_config(discretization_config)
+        sigmas:torch.Tensor = disc(num_idx, do_append_zero=do_append_zero, flip=flip)
         self.sigmas = sigmas
         # self.register_buffer("sigmas", sigmas)
         self.quantize_c_noise = quantize_c_noise
 
-    def sigma_to_idx(self, sigma):
+    def sigma_to_idx(self, sigma:torch.Tensor):
         dists = sigma - self.sigmas.to(sigma.device)[:, None]
         return dists.abs().argmin(dim=0).view(sigma.shape)
 
     def idx_to_sigma(self, idx):
         return self.sigmas.to(idx.device)[idx]
 
-    def possibly_quantize_sigma(self, sigma):
+    def possibly_quantize_sigma(self, sigma:torch.Tensor):
         return self.idx_to_sigma(self.sigma_to_idx(sigma))
 
     def possibly_quantize_c_noise(self, c_noise):

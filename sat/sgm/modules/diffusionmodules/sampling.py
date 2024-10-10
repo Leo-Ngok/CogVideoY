@@ -2,11 +2,14 @@
 Partially ported from https://github.com/crowsonkb/k-diffusion/blob/master/k_diffusion/sampling.py
 """
 
-from typing import Dict, Union
+from typing import Any, Callable, Dict, Optional, Union
 
 import torch
 from omegaconf import ListConfig, OmegaConf
 from tqdm import tqdm
+
+from sgm.modules.diffusionmodules.discretizer import Discretization
+from sgm.modules.diffusionmodules.denoiser import Denoiser
 
 from ...modules.diffusionmodules.sampling_utils import (
     get_ancestral_step,
@@ -33,8 +36,10 @@ class BaseDiffusionSampler:
         device: str = "cuda",
     ):
         self.num_steps = num_steps
-        self.discretization = instantiate_from_config(discretization_config)
-        self.guider = instantiate_from_config(
+        self.discretization:Discretization = instantiate_from_config(discretization_config)
+
+        # TODO: Make the type more generalized.
+        self.guider:DynamicCFG = instantiate_from_config(
             default(
                 guider_config,
                 DEFAULT_GUIDER,
@@ -482,7 +487,7 @@ class VideoDDIMSampler(BaseDiffusionSampler):
         self.fixed_frames = fixed_frames
         self.sdedit = sdedit
 
-    def prepare_sampling_loop(self, x, cond, uc=None, num_steps=None):
+    def prepare_sampling_loop(self, x:torch.Tensor, cond:dict[str, torch.Tensor], uc=None, num_steps=None):
         alpha_cumprod_sqrt, timesteps = self.discretization(
             self.num_steps if num_steps is None else num_steps,
             device=self.device,
@@ -500,19 +505,21 @@ class VideoDDIMSampler(BaseDiffusionSampler):
 
         return x, s_in, alpha_cumprod_sqrt, num_sigmas, cond, uc, timesteps
 
-    def denoise(self, x, denoiser, alpha_cumprod_sqrt, cond, uc, timestep=None, idx=None, scale=None, scale_emb=None):
+    def denoise(self, x:torch.Tensor, denoiser:Callable[[Any], torch.Tensor], alpha_cumprod_sqrt:torch.Tensor, cond, uc, timestep:Optional[torch.Tensor]=None, idx=None, scale=None, scale_emb=None):
         additional_model_inputs = {}
 
         if isinstance(scale, torch.Tensor) == False and scale == 1:
             additional_model_inputs["idx"] = x.new_ones([x.shape[0]]) * timestep
             if scale_emb is not None:
                 additional_model_inputs["scale_emb"] = scale_emb
-            denoised = denoiser(x, alpha_cumprod_sqrt, cond, **additional_model_inputs).to(torch.float32)
+            denoised:torch.Tensor = denoiser(x, alpha_cumprod_sqrt, cond, **additional_model_inputs).to(torch.float32)
         else:
             additional_model_inputs["idx"] = torch.cat([x.new_ones([x.shape[0]]) * timestep] * 2)
-            denoised = denoiser(
+
+            raw_denoised:torch.Tensor = denoiser(
                 *self.guider.prepare_inputs(x, alpha_cumprod_sqrt, cond, uc), **additional_model_inputs
-            ).to(torch.float32)
+            )
+            denoised = raw_denoised.to(torch.float32)
             if isinstance(self.guider, DynamicCFG):
                 denoised = self.guider(
                     denoised, (1 - alpha_cumprod_sqrt**2) ** 0.5, step_index=self.num_steps - timestep, scale=scale
@@ -526,11 +533,11 @@ class VideoDDIMSampler(BaseDiffusionSampler):
         alpha_cumprod_sqrt,
         next_alpha_cumprod_sqrt,
         denoiser,
-        x,
+        x:torch.Tensor,
         cond,
         uc=None,
         idx=None,
-        timestep=None,
+        timestep:Optional[torch.Tensor]=None,
         scale=None,
         scale_emb=None,
     ):
@@ -544,7 +551,7 @@ class VideoDDIMSampler(BaseDiffusionSampler):
         x = append_dims(a_t, x.ndim) * x + append_dims(b_t, x.ndim) * denoised
         return x
 
-    def __call__(self, denoiser, x, cond, uc=None, num_steps=None, scale=None, scale_emb=None):
+    def __call__(self, denoiser, x:torch.Tensor, cond:dict[str, torch.Tensor], uc=None, num_steps=None, scale=None, scale_emb=None):
         x, s_in, alpha_cumprod_sqrt, num_sigmas, cond, uc, timesteps = self.prepare_sampling_loop(
             x, cond, uc, num_steps
         )
@@ -601,8 +608,8 @@ class VPSDEDPMPP2MSampler(VideoDDIMSampler):
         alpha_cumprod_sqrt,
         next_alpha_cumprod_sqrt,
         denoiser,
-        x,
-        cond,
+        x: torch.Tensor,
+        cond:dict[str,torch.Tensor],
         uc=None,
         idx=None,
         timestep=None,
@@ -674,7 +681,7 @@ class VPSDEDPMPP2MSampler(VideoDDIMSampler):
 
         return x
 
-
+# USELESS.
 class VPODEDPMPP2MSampler(VideoDDIMSampler):
     def get_variables(self, alpha_cumprod_sqrt, next_alpha_cumprod_sqrt, previous_alpha_cumprod_sqrt=None):
         alpha_cumprod = alpha_cumprod_sqrt**2

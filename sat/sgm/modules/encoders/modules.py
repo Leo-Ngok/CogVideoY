@@ -1,7 +1,7 @@
 import math
 from contextlib import nullcontext
 from functools import partial
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import kornia
 import numpy as np
@@ -14,7 +14,8 @@ from transformers import (
     T5EncoderModel,
     T5Tokenizer,
 )
-
+from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
+from transformers.tokenization_utils_base import BatchEncoding
 from ...util import (
     append_dims,
     autocast,
@@ -76,7 +77,7 @@ class GeneralConditioner(nn.Module):
 
     def __init__(self, emb_models: Union[List, ListConfig], cor_embs=[], cor_p=[]):
         super().__init__()
-        embedders = []
+        embedders:list[AbstractEmbModel] = []
         for n, embconfig in enumerate(emb_models):
             embedder = instantiate_from_config(embconfig)
             assert isinstance(
@@ -132,24 +133,26 @@ class GeneralConditioner(nn.Module):
 
     def get_single_embedding(
         self,
-        embedder,
-        batch,
+        embedder: AbstractEmbModel,
+        batch: Dict, # is just ["txt": ["prompt here"]]
         output,
         cond_or_not: Optional[np.ndarray] = None,
-        force_zero_embeddings: Optional[List] = None,
+        force_zero_embeddings: Optional[List] = None, # either [] or ["txt"]
     ):
+        # T5 is not trainable.
         embedding_context = nullcontext if embedder.is_trainable else torch.no_grad
         with embedding_context():
+            # input_key == "txt"
             if hasattr(embedder, "input_key") and (embedder.input_key is not None):
                 if embedder.legacy_ucg_val is not None:
                     if cond_or_not is None:
                         batch = self.possibly_get_ucg_val(embedder, batch)
                     else:
                         batch = self.surely_get_ucg_val(embedder, batch, cond_or_not)
-                emb_out = embedder(batch[embedder.input_key])
+                emb_out:torch.FloatTensor = embedder(batch[embedder.input_key])
             elif hasattr(embedder, "input_keys"):
                 emb_out = embedder(*[batch[k] for k in embedder.input_keys])
-        assert isinstance(
+        assert isinstance( # TODO: I think emb_out is just the output layer of T5 and is a tensor.
             emb_out, (torch.Tensor, list, tuple)
         ), f"encoder outputs must be tensors or a sequence, but got {type(emb_out)}"
         if not isinstance(emb_out, (list, tuple)):
@@ -174,6 +177,8 @@ class GeneralConditioner(nn.Module):
                         * emb
                     )
             if hasattr(embedder, "input_key") and embedder.input_key in force_zero_embeddings:
+                # This condition is satisfied for self(batch_uc, force_uc_zero_embeddings)
+                # Then zero all the weights out.
                 emb = torch.zeros_like(emb)
             if out_key in output:
                 output[out_key] = torch.cat((output[out_key], emb), self.KEY2CATDIM[out_key])
@@ -182,12 +187,15 @@ class GeneralConditioner(nn.Module):
         return output
 
     def forward(self, batch: Dict, force_zero_embeddings: Optional[List] = None) -> Dict:
-        output = dict()
+        output:dict[str, torch.Tensor] = dict()
         if force_zero_embeddings is None:
             force_zero_embeddings = []
 
-        if len(self.cor_embs) > 0:
+        if len(self.cor_embs) > 0: # len == 0
+            # list(batch.keys()) is [txt]
+            # batch size is ONE.
             batch_size = len(batch[list(batch.keys())[0]])
+            # always zero. (JUST IGNORE THIS PART.)
             rand_idx = np.random.choice(len(self.cor_p), size=(batch_size,), p=self.cor_p)
             for emb_idx in self.cor_embs:
                 cond_or_not = rand_idx % 2
@@ -196,11 +204,11 @@ class GeneralConditioner(nn.Module):
                     self.embedders[emb_idx],
                     batch,
                     output=output,
-                    cond_or_not=cond_or_not,
+                    cond_or_not=cond_or_not, # ZERO.
                     force_zero_embeddings=force_zero_embeddings,
                 )
 
-        for i, embedder in enumerate(self.embedders):
+        for i, embedder in enumerate(self.embedders): # ONLY ONE EMBEDDER.
             if i in self.cor_embs:
                 continue
             output = self.get_single_embedding(
@@ -208,25 +216,41 @@ class GeneralConditioner(nn.Module):
             )
         return output
 
-    def get_unconditional_conditioning(self, batch_c, batch_uc=None, force_uc_zero_embeddings=None):
+    def get_unconditional_conditioning(self, batch_c:dict[str, Any], batch_uc=None, force_uc_zero_embeddings=None):
+        '''
+        In observable calls to this fn, batch_{c, uc} is just a dict from
+        'txt' |-> ["prompt here"]
+        force_uc_zero_embeddings is ['txt']
+
+        boils down to direct call to get_single_embedding.
+        '''
         if force_uc_zero_embeddings is None:
             force_uc_zero_embeddings = []
+
+        # Save the UCG rate here first, and then restore it after inference.
+
+        # SAVE CONTEXT START
         ucg_rates = list()
-        for embedder in self.embedders:
+        for embedder in self.embedders: # the only embedder is the T5.
             ucg_rates.append(embedder.ucg_rate)
             embedder.ucg_rate = 0.0
         cor_embs = self.cor_embs
         cor_p = self.cor_p
         self.cor_embs = []
         self.cor_p = []
+        # SAVE CONTEXT END.
 
-        c = self(batch_c)
-        uc = self(batch_c if batch_uc is None else batch_uc, force_uc_zero_embeddings)
 
+        c:dict[str,torch.Tensor] = self(batch_c)
+        uc:dict[str,torch.Tensor] = self(batch_c if batch_uc is None else batch_uc, force_uc_zero_embeddings)
+
+        # RESTORE CONTEXT START.
         for embedder, rate in zip(self.embedders, ucg_rates):
             embedder.ucg_rate = rate
         self.cor_embs = cor_embs
         self.cor_p = cor_p
+        # RESTORE CONTEXT END.
+
 
         return c, uc
 
@@ -244,10 +268,10 @@ class FrozenT5Embedder(AbstractEmbModel):
     ):
         super().__init__()
         if model_dir is not "google/t5-v1_1-xxl":
-            self.tokenizer = T5Tokenizer.from_pretrained(model_dir)
+            self.tokenizer:T5Tokenizer = T5Tokenizer.from_pretrained(model_dir)
             self.transformer = T5EncoderModel.from_pretrained(model_dir)
         else:
-            self.tokenizer = T5Tokenizer.from_pretrained(model_dir, cache_dir=cache_dir)
+            self.tokenizer:T5Tokenizer = T5Tokenizer.from_pretrained(model_dir, cache_dir=cache_dir)
             self.transformer = T5EncoderModel.from_pretrained(model_dir, cache_dir=cache_dir)
         self.device = device
         self.max_length = max_length
@@ -262,7 +286,7 @@ class FrozenT5Embedder(AbstractEmbModel):
 
     # @autocast
     def forward(self, text):
-        batch_encoding = self.tokenizer(
+        batch_encoding:BatchEncoding = self.tokenizer(
             text,
             truncation=True,
             max_length=self.max_length,
@@ -271,9 +295,10 @@ class FrozenT5Embedder(AbstractEmbModel):
             padding="max_length",
             return_tensors="pt",
         )
-        tokens = batch_encoding["input_ids"].to(self.device)
+        
+        tokens:Union[torch.IntTensor, torch.LongTensor] = batch_encoding["input_ids"].to(self.device)
         with torch.autocast("cuda", enabled=False):
-            outputs = self.transformer(input_ids=tokens)
+            outputs:BaseModelOutputWithPastAndCrossAttentions = self.transformer(input_ids=tokens)
         z = outputs.last_hidden_state
         return z
 

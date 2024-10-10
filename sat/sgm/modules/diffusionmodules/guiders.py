@@ -67,7 +67,7 @@ class DynamicCFG(VanillaCFG):
             )
         )
 
-    def __call__(self, x, sigma, step_index, scale=None):
+    def __call__(self, x:torch.Tensor, sigma:torch.Tensor, step_index:torch.Tensor, scale=None):
         x_u, x_c = x.chunk(2)
         scale_value = self.scale_schedule(sigma, step_index.item())
         x_pred = self.dyn_thresh(x_u, x_c, scale_value)
